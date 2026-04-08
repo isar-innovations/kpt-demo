@@ -1,0 +1,779 @@
+\documentclass{article}
+\input{style.tex}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+
+\setwhitepapertitle{Keyed Phase Transform for\\Private Vector Retrieval}
+\setwhitepapersubtitle{isar innovations Technical Report}
+\setwhitepaperauthor{Nino Wagensonner}
+\setwhitepaperemail{info@isar-innovations.dev}
+\setwhitepaperdate{April 2026}
+
+\begin{document}
+\makewhitepapertitle
+
+\begin{abstract}
+Traditional encryption protects stored data but destroys the ability to search by meaning.
+Distance-preserving schemes maintain searchability but leak pairwise structure.
+We introduce the \emph{keyed phase transform} (KPT), which makes semantic search itself key-dependent:
+with the correct key, retrieval works normally;
+with any other key, the score space collapses to a noise zone where no query produces usable signal.
+Across three datasets (AG News, 20 Newsgroups, MS MARCO) with sentence-transformer embeddings (384-dim),
+KPT achieves Recall@10 $\geq 0.906$ with public-layer pair correlation $\leq 0.029$,
+while DCPE/SAP achieves Recall@10 $\leq 0.393$ with pair correlation $\geq 0.714$ at its best tested operating point.
+At 100{,}000 documents (AG News), pair correlation tightens to $0.002$ under controlled sequential sampling.
+Through 8-component ablation we identify phase coherence as the sole isolation mechanism
+and prove $\mathrm{sinc}^2(\delta)$ score decay (Theorem~1) and 623-bit geometric key depth (Theorem~2).
+Per-document scrambling ensures all scrambled wave components have pair correlation $< 0.01$ at rest;
+unscrambled routing components (\texttt{mode\_weight}, \texttt{mode\_energy}) show residual signal at pair\_corr $\approx 0.07$.
+Five adversarial attacks fail empirically, including chosen-plaintext and two-user collusion.
+Combined with AES-256-GCM on text payloads, KPT provides defense in depth: content remains AES-protected regardless of KPT status; even a broken KPT layer would expose only pairwise similarity between opaque ciphertext, not content. The method adds 0.05\,ms overhead per document and requires only \texttt{numpy}.
+\end{abstract}
+
+%% ========================================================================
+\section{Introduction}
+\label{sec:introduction}
+
+Encrypting a file with AES makes it unreadable without the key, but also unsearchable.
+Finding ``documents about cats'' in an encrypted vector database requires decrypting everything first.
+Encryption and searchability are at odds: protecting content destroys the ability to search by meaning.
+
+Vector databases store embeddings, numerical representations of text that capture semantic similarity.
+These embeddings are powerful because similar documents have similar vectors.
+But that same property makes them dangerous:
+\citet{morris2023} showed 92\% text reconstruction from embeddings;
+OWASP~\citep{owasp2025} added ``Vector and Embedding Weaknesses'' as LLM08 to their Top~10;
+PoisonedRAG~\citep{zou2025} demonstrated that 5 crafted documents can manipulate 90\% of RAG responses.
+
+Existing defenses face a trilemma.
+Standard encryption (AES-GCM) makes embeddings unsearchable.
+Distance-preserving schemes (DCPE/SAP) maintain searchability but intentionally preserve pairwise distances, leaking exactly the similarity structure an attacker needs.
+ORAM-based approaches (Compass) provide formal security but at $10$--$100\times$ latency.
+
+We propose a different approach: instead of encrypting the bytes and losing searchability, we make \emph{the search itself} key-dependent.
+The keyed phase transform (KPT) decomposes each embedding into a superposition of key-dependent carrier waves with controlled phase shifts.
+The score function measures the coherence of the resulting interference pattern.
+With the correct key, constructive interference produces a strong retrieval signal.
+With any other key, the phases are pseudorandom and destructive interference collapses the score to noise, just as a diffraction grating produces no coherent pattern when the slit spacing is unknown.
+
+AES protects the payload. KPT protects the retrieval meaning.
+The score decay follows a $\mathrm{sinc}^2(\delta)$ law (Theorem~1), identical to single-slit diffraction.
+A system using both (AES on stored text, KPT on stored vectors) protects content at rest and makes unauthorized semantic search impossible, without decryption at query time.
+
+\paragraph{Scientific claims.}
+\begin{enumerate}[nosep]
+  \item KPT exhibits hard key sensitivity with preserved semantic retrieval quality: correct-key scores cluster at ${\sim}0.557$, wrong-key scores collapse to ${\sim}0.012$.
+  \item Wrong-key access collapses to a noise zone, not degraded results. The contribution is noise induction in the search space, not byte-level encryption.
+  \item The method functions as a single-embedding access layer for at-rest-protected semantic search, requiring no secondary plaintext index.
+\end{enumerate}
+
+\paragraph{Scope and non-claims.}
+This work does not yet provide a formal security reduction to a known hard problem.
+We use SHA-256 for key derivation and provide two analytical theorems plus empirical adversarial evaluation, but the formal bridge from ``empirically secure'' to ``provably secure'' remains open work.
+The mathematical building blocks are compatible with such a proof (phase retrieval hardness~\citep{maillard2020}, $\mathrm{sinc}^2$ decay, and nonlinear pipeline non-invertibility), but the reduction itself is future work.
+We do not claim ``no leakage,'' ``proven secure,'' or ``better on all datasets.''
+We claim key-gated semantic retrieval with empirically measured isolation and analytical bounds.
+
+\paragraph{Contributions.}
+\begin{enumerate}[nosep]
+  \item \textbf{Phase coherence} identified as sole key-isolation mechanism through 8-component ablation.
+  \item \textbf{Analytical bounds:} $\mathrm{sinc}^2(\delta)$ score decay (Theorem~1) and 623-bit geometric key depth (Theorem~2).
+  \item \textbf{Three-dataset evaluation} (AG News, 20 Newsgroups, MS MARCO at 6k; AG News at 100k) with DCPE/SAP comparison.
+  \item \textbf{Per-document scrambling} that reduces \texttt{wave\_real} leakage from 0.904 to $-0.004$ and defeats collusion attacks.
+  \item \textbf{Adversarial evaluation:} five attacks reproduced and defeated (score-oracle, known-plaintext, statistical leakage, chosen-plaintext, collusion).
+\end{enumerate}
+
+
+%% ========================================================================
+\section{Related Work}
+\label{sec:related}
+
+\subsection{Threat Model}
+
+\paragraph{Passive attacker (data-at-rest).}
+Access to stored embeddings (public layer), no query capability.
+Goal: reconstruct pairwise similarity or original text.
+
+\paragraph{Active attacker (score-oracle).}
+Can issue queries and observe scores without the secret key.
+Goal: reconstruct document similarity graph.
+
+We do \emph{not} defend against authorized users, traffic analysis, or key compromise.
+
+\subsection{Why Not Standard Encryption?}
+
+Encrypting embeddings with AES-GCM produces opaque ciphertext.
+To answer a single semantic query, the system must decrypt all $N$ documents, compute similarities in plaintext, and re-encrypt, turning $O(1)$ vector lookup into $O(N)$ decrypt-compare-encrypt.
+At 100k documents this is prohibitive and defeats the purpose of a vector index.
+
+KPT makes the encrypted representation itself searchable.
+The score operator works directly on stored keyed vectors without decryption.
+The key gates retrieval semantics, not storage bytes.
+
+\subsection{Distance-Preserving Encryption}
+
+DCPE/SAP~\citep{fuchsbauer2022}: Scale-And-Perturb with formal RoR indistinguishability.
+Intentionally preserves approximate distances; our experiments show pair correlation 0.71 to 0.82 (Section~\ref{sec:experiments}).
+DCE~\citep{liu2025} achieves exact distance comparison but at $8\times$ storage.
+IronCore Cloaked AI (2025) productionizes SAP but acknowledges CPA weakness.
+
+\subsection{Other Approaches}
+
+\begin{itemize}[nosep]
+  \item \textbf{Compass}~\citep{zhu2024}: ORAM-based, formally secure, $10$--$100\times$ latency.
+  \item \textbf{STEER}~\citep{he2025}: Learned alignment transform for query privacy.
+  \item \textbf{Keyed Chaotic Dynamics}~\citep{fagan2025}: Additive tensor masking ($\tilde{X}=X+S$) via chaotic maps. Purely conceptual: no experiments, no retrieval evaluation, additive masking is trivially invertible.
+  \item \textbf{OSNIP}~\citep{cao2026}: Null-space injection for LLM inference, not retrieval.
+\end{itemize}
+
+\subsection{Wave-Based Embeddings}
+
+Concurrent works (2025) model embeddings as $\psi(x)=A(x)\cdot\exp(i\varphi(x))$ using interference as similarity.
+Wave-Based Semantic Memory and PRISM validate our mathematical framework but provide no security analysis.
+
+\subsection{Theoretical Foundations}
+
+Our $\mathrm{sinc}^2$ decay connects to the Fourier transform of the rectangular function (Bochner's theorem; \citealt{rahimi2007}).
+Phase retrieval hardness~\citep{maillard2020} provides information-theoretic support.
+We distinguish from DRPE (optical encryption), which is vulnerable to known-plaintext attacks via iterative Fourier reconstruction; our nonlinear pipeline (\texttt{tanh}, routing, chunking) prevents this.
+
+
+%% ========================================================================
+\section{Method}
+\label{sec:method}
+
+\subsection{Architecture}
+
+Given $x \in \mathbb{R}^d$ and key $K$:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Carrier wave:} Project $x$ through key-derived orthogonal matrices $A_K$, $B_K$. Amplitude via \texttt{tanh} modulation, phase from carrier projection.
+  \item \textbf{Mode decomposition:} Route carrier through $M{=}8$ modes via key-dependent sparse top-$k$ softmax routing.
+  \item \textbf{Superposition:} Weight modes with key-dependent phase shifts $\varphi_K^{(m)}$, normalize.
+  \item \textbf{Per-document scramble:} Permute $+$ sign-flip wave vectors with seed from SHA-256(\texttt{key} $\|$ \texttt{mode\_weight}). Each document stored in its own coordinate system (Section~\ref{sec:scrambling}).
+  \item \textbf{Public layer:} Destructured projection of mode weights (intentionally lossy).
+  \item \textbf{Score:} Unscramble both doc and query, then compute
+    \[
+      \alpha\bigl(0.80\cdot\mathrm{coherence} + 0.10\cdot\mathrm{energy} + 0.10\cdot\mathrm{mode\_support}\bigr) + (1-\alpha)\cdot\mathrm{base\_overlap}^2,
+    \]
+    where $\alpha=0.46$. With the correct key, coherence approaches 1.0, energy and mode\_support contribute small terms, and base\_overlap$^2$ averages ${\sim}0.5$ for normalized vectors. This yields a score ceiling of approximately $0.46 \times 0.82 + 0.54 \times 0.5 \approx 0.557$. The fine-grained ranking between documents comes from the base\_overlap$^2$ term, the only content-dependent component. With a wrong key, coherence collapses to ${\sim}0$ and the residual offset from energy/mode\_support produces ${\sim}0.012$.
+\end{enumerate}
+
+All parameters derived from key string via SHA-256-seeded PRNG.
+
+\subsection{Physical Intuition: Why Phases Gate Meaning}
+
+KPT applies wave mechanics to embedding vectors. The physics is literal, not metaphorical.
+
+Each document embedding is decomposed into a carrier wave with amplitude and phase, then split across $M{=}8$ modes with key-dependent phase shifts, analogous to a prism splitting light into frequencies.
+The key determines the phase shifts; the score function measures coherence of the resulting interference pattern.
+
+\paragraph{Constructive interference (correct key).}
+Shared phase structure means wave components align.
+Overlaps add coherently, producing a strong score (${\sim}0.557$).
+
+\paragraph{Destructive interference (wrong key).}
+Mismatched phases point in pseudorandom directions.
+Contributions cancel on average.
+The score (${\sim}0.012$) reflects the absence of signal, not wrong information.
+
+\paragraph{$\mathrm{sinc}^2$ decay.}
+Theorem~1 follows the same mathematics as single-slit diffraction: the Fourier transform of a rectangular phase window.
+Small phase errors collapse the signal rapidly.
+
+Score compression (Section~\ref{sec:limitations}) follows directly: all correct-key documents produce near-maximal constructive interference, so scores cluster in a narrow band.
+Wrong-key scores are query-independent because destructive interference yields the same noise floor regardless of the query.
+
+Controlled ablation verifies this is the \emph{sole} isolation mechanism:
+\begin{itemize}[nosep]
+  \item Orthogonal projection alone: ratio $= 1.0\times$ (zero isolation, no phase structure).
+  \item Phase rotation alone: ratio scales super-linearly with $d$ ($3{,}753\times$ at $d{=}1024$).
+\end{itemize}
+
+\subsection{Per-Document Scrambling}
+\label{sec:scrambling}
+
+A naive implementation stores wave vectors with a single key-dependent rotation shared across all documents.
+Since orthogonal rotations preserve inner products, an attacker can compute cosine similarity on the stored wave vectors and recover the original similarity structure, even without the key.
+
+We address this with \emph{per-document scrambling}: for each document $i$, a key-dependent permutation $P_i$ and sign-flip vector $S_i$ are derived from SHA-256(\texttt{key} $\|$ \texttt{mode\_weight}$_i$\texttt{.bytes}).
+The \texttt{mode\_weight} vector is unique per document (determined by content-dependent routing) and is not itself scrambled, making it a stable seed across encode and decode.
+The stored wave vector is:
+\[
+  \texttt{stored\_wave}[i] = S_i \odot \texttt{wave}[i][P_i].
+\]
+
+Since $P_i \neq P_j$ for $i \neq j$, cosine similarity between stored vectors no longer corresponds to the original similarity.
+The score function knows the key, reconstructs $P_i$ and $S_i$, and unscrambles both doc and query vectors before computing the overlap.
+
+\begin{itemize}[nosep]
+  \item \textbf{Before scrambling:} \texttt{wave\_real} pair\_corr $= 0.904$ (critical leak).
+  \item \textbf{After scrambling:} \texttt{wave\_real} pair\_corr $= -0.004$ (noise level).
+\end{itemize}
+
+All scrambled wave components now have pair\_corr $< 0.01$.
+The unscrambled routing components (\texttt{mode\_weight}, \texttt{mode\_energy}) retain weak residual signal (pair\_corr $\approx 0.07$, ARI $\approx 0.09$).
+The scramble adds $O(d)$ overhead per document (same order as the dot product itself) and does not affect Recall@10, correct-key scores, or wrong-key isolation.
+
+This defense also defeats the \emph{sorted-value attack} (sorting values to bypass permutation) because the sign flips destroy the value distribution.
+It defeats \emph{collusion attacks} (two users combining their encrypted views of the same documents) because each key produces different per-document scrambles: concatenating differently scrambled vectors yields noise (pair\_corr $0.001$, down from $0.944$ without scrambling).
+
+\subsection{Why Post-Hoc Transformations Cannot Recover the Signal}
+
+An attacker with access to the stored vectors might attempt mathematical transformations (exponential rescaling, PCA, neural network inversion) to extract the original structure.
+This fails because:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Per-document scrambling} means each stored vector lives in a different coordinate system. Pairwise operations (cosine, distance) across documents are meaningless.
+  \item \textbf{Eight nonlinear, key-dependent stages} (orthogonal projection $\to$ \texttt{tanh} $\to$ mode routing $\to$ softmax $\to$ phase rotation $\to$ per-doc scramble $\to$ chunk pooling $\to$ normalization) form a composition that is not invertible without the key. Our CPA attack (Section~\ref{sec:cpa}) confirms this: even with 500 chosen plaintext pairs, an MLP achieves only cosine $0.005$ on scrambled wave vectors.
+  \item \textbf{Score compression is a feature.} Wrong-key scores have variance ${\sim}10^{-12}$ (Section~\ref{sec:score-oracle}). No monotonic transformation can extract signal from a flat distribution.
+\end{enumerate}
+
+\subsection{Key Derivation}
+
+HKDF (RFC~5869) with SHA-512, producing 512-bit key material per derivation context.
+Each pipeline stage (projection, routing, phase shifts, scrambling) uses a separate HKDF info parameter for domain separation.
+This provides 256-bit post-quantum security under Grover's algorithm and supports arbitrary key lengths without entropy truncation.
+
+
+%% ========================================================================
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Setup}
+
+\begin{table}[htbp]
+\centering
+\caption{Dataset overview.}
+\label{tab:datasets}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+ & \textbf{AG News} & \textbf{20 Newsgroups} & \textbf{MS MARCO} \\
+\midrule
+Type & Classification (4 cls) & Classification (20 cls) & Passage retrieval \\
+Docs / Queries & 6{,}000 / 1{,}200 & 6{,}000 / 1{,}200 & 6{,}000 / 1{,}200 \\
+Vectorizer & \multicolumn{3}{c}{sentence-transformers (384-dim)} \\
+Seeds & 3 & 3 & 3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Baseline: DCPE/SAP at $\sigma \in \{0.05, 0.10, 0.20\}$.
+
+\subsection{Ablation: Source of Key Isolation}
+
+8 nonlinearities disabled individually across $d \in \{64, 128, 256, 384, 512, 768, 1024\}$:
+
+\begin{table}[htbp]
+\centering
+\caption{Ablation study: isolation ratio when individual components are disabled.}
+\label{tab:ablation}
+\begin{tabular}{@{}lccl@{}}
+\toprule
+\textbf{Component disabled} & $d{=}384$ & $d{=}1024$ & \textbf{Interpretation} \\
+\midrule
+None (baseline) & $47\times$ & $226\times$ & \\
+Decoy floor & $35\times$ & $\mathbf{15{,}905\times}$ & Primary limiter \\
+Top-$k$ routing & $\mathbf{92\times}$ & $95\times$ & Routing reduces isolation \\
+Base squaring & $27\times$ & $82\times$ & Squaring \emph{helps} (amplifies gap) \\
+All nonlinearities & $36\times$ & $54\times$ & \\
+Pure phase only & $789\times$ & $3{,}753\times$ & Phase is the mechanism \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Finding:} The decoy floor (mode minimum weight $0.03$) is the primary limiter.
+Without it, isolation scales super-linearly because non-matching modes contribute zero.
+Trade-off: decoy improves retrieval robustness.
+
+\subsection{Comparison with DCPE/SAP}
+\label{sec:dcpe-comparison}
+
+\begin{table}[htbp]
+\centering
+\caption{KPT vs.\ DCPE/SAP across three datasets. Bold indicates best result per column.}
+\label{tab:dcpe}
+\begin{tabular}{@{}l*{2}{c}*{2}{c}*{2}{c}@{}}
+\toprule
+ & \multicolumn{2}{c}{\textbf{AG News}} & \multicolumn{2}{c}{\textbf{20NG}} & \multicolumn{2}{c}{\textbf{MS MARCO}} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7}
+\textbf{Method} & Recall & pair\_corr & Recall & pair\_corr & Recall & pair\_corr \\
+\midrule
+\textbf{KPT} & \textbf{0.991} & \textbf{0.029} & \textbf{0.906} & \textbf{$-$0.005} & \textbf{0.990} & \textbf{$-$0.018} \\
+DCPE $\sigma{=}0.05$ & 0.393 & 0.763 & 0.340 & 0.911 & 0.379 & 0.714 \\
+DCPE $\sigma{=}0.10$ & 0.076 & 0.397 & 0.095 & 0.702 & 0.063 & 0.345 \\
+DCPE $\sigma{=}0.20$ & 0.006 & 0.135 & 0.013 & 0.326 & 0.006 & 0.111 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+KPT achieves Recall $\geq 0.906$ with pair\_corr $\leq 0.029$ across all datasets.
+Under controlled conditions (fixed seed, sequential sampling), pair\_corr drops to 0.001--0.005;
+the 0.029 value reflects variance across 3-seed balanced sampling in the evaluation pipeline.
+
+At the three tested noise levels, DCPE does not achieve Recall $> 0.4$ with pair\_corr $< 0.7$.
+We note that DCPE's noise parameter is continuously tunable; intermediate values may exist, though the fundamental design (intentional distance preservation) creates an inherent leakage floor.
+
+\textbf{Caveat:} DCPE provides formal RoR guarantees. KPT does not.
+
+\subsection{Key Sensitivity (Avalanche)}
+
+12 key variants at Levenshtein distances 0--27: distance~0 yields full retrieval; distance $\geq 1$ yields complete collapse (ratio 48--$228\times$).
+No correlation between edit distance and attack success.
+This is not gradual degradation.
+It is a qualitative phase transition from ``fully usable'' to ``completely useless.''
+
+\subsection{Key-Space Depth}
+
+\begin{theorem}[$\mathrm{sinc}^2$ Phasor Decay]
+\label{thm:sinc}
+For the coherence component of the score under uniform phase perturbation $\delta \in [-\delta, \delta]$:
+\[
+  \frac{E[\mathrm{coherence}(K')]}{E[\mathrm{coherence}(K)]} = \mathrm{sinc}^2(\delta) = \left(\frac{\sin\delta}{\delta}\right)^{\!2}.
+\]
+\end{theorem}
+
+\begin{proof}
+Expected phasor overlap $E[\exp(i\eta)] = \sin(\delta)/\delta$ for $\eta \sim \mathrm{Uniform}(-\delta,\delta)$.
+The coherence term is quadratic in phasor overlaps, so the ratio is $\mathrm{sinc}^2(\delta)$.
+Verified with SymPy.
+\end{proof}
+
+\paragraph{Scope of Theorem~\ref{thm:sinc}.}
+The theorem describes the \emph{coherence component} (weight $\alpha{=}0.46$ in the score), not the full score.
+The full score includes \texttt{mode\_support} and energy terms that contribute a positive offset $\varepsilon \approx 0.012$ independent of key correctness.
+Empirically: correct-key score $= 0.557$, wrong-key score $= 0.012$ (of which ${\sim}0.012$ is the constant offset from \texttt{mode\_support}/energy, and ${\sim}0$ is the coherence contribution).
+The $\mathrm{sinc}^2$ decay correctly predicts the collapse of the coherence term; the residual offset is a known architectural artifact of the decoy floor.
+
+\begin{theorem}[Geometric Key Depth]
+\label{thm:keydepth}
+The phase search space has geometric depth $B = D \times \log_2(\pi/\delta_c)$ bits, where $D = M \times d$ phase parameters and $\delta_c$ satisfies $\mathrm{sinc}^2(\delta_c) = $ wrong-key coherence ratio.
+\end{theorem}
+
+\begin{proof}
+Phase space $\mathbb{T}^D = [-\pi,\pi]^D$.
+$P(\text{random phase vector in } \delta_c\text{-ball}) = (\delta_c/\pi)^D$.
+\end{proof}
+
+\begin{table}[htbp]
+\centering
+\caption{Geometric key depth for different configurations.}
+\label{tab:keydepth}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Config} & $D$ & \textbf{Geometric Depth} \\
+\midrule
+dim${}=96$, $m{=}8$ & 768 & 156 bits \\
+\textbf{dim${}=384$, $m{=}8$} & \textbf{3072} & \textbf{623 bits} \\
+dim${}=768$, $m{=}8$ & 6144 & 1245 bits \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Critical qualification: geometric depth $\neq$ key security.}
+The 623 bits measure the volume of the continuous phase torus, but all phase parameters are derived from a single SHA-256 seed (256 bits).
+The effective security is therefore:
+\[
+  \mathrm{effective\_bits} = \min\bigl(H(\mathrm{key}),\; 256,\; 623\bigr) = \min\bigl(H(\mathrm{key}),\; 256\bigr),
+\]
+where $H(\mathrm{key})$ is the entropy of the key string.
+For a random 32-byte key: 256 bits.
+For a 20-character alphanumeric password: ${\sim}119$ bits.
+The geometric depth (623 bits) confirms that the \emph{phase geometry does not limit security}; the bottleneck is the key/seed entropy, not the transform.
+
+\paragraph{Validation.}
+10{,}000 random keys: $\mu{=}0.0065$, $\sigma{=}0.0044$, $\max{=}0.0196$ vs.\ correct $= 0.5577$.
+Gap: $124\sigma$.
+
+\subsection{Multi-User Demonstration}
+
+Alice encrypts 500 documents. Three queries with Alice's key, Bob's key, and public-only:
+
+\begin{table}[htbp]
+\centering
+\caption{Multi-user query results for ``Stock market crash.''}
+\label{tab:multiuser}
+\begin{tabular}{@{}llc@{}}
+\toprule
+\textbf{Searcher} & \textbf{Top result} & \textbf{Score} \\
+\midrule
+Alice (correct) & Business: markets, Greenspan & 0.558 \\
+Bob (wrong key) & World: Arafat, Sharon & 0.012 \\
+Attacker (public) & Random: Parliament, Microsoft & 0.060 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Scaling to 100{,}000 Documents}
+
+To address the concern that small-scale experiments may not transfer, we evaluate KPT and DCPE/SAP at production scale: 100{,}000 AG News documents encoded with sentence-transformers (384-dim) on an RTX 3060 GPU (sbert) + CPU (KPT/DCPE scoring).
+
+\begin{table}[htbp]
+\centering
+\caption{Scaling behavior from 1{,}000 to 100{,}000 documents.}
+\label{tab:scaling}
+\begin{tabular}{@{}rcccccc@{}}
+\toprule
+ & \multicolumn{3}{c}{\textbf{KPT}} & \multicolumn{2}{c}{\textbf{DCPE}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-6}
+\textbf{Scale} & Recall@10 & pair\_corr & encode/doc & Recall@10 & pair\_corr \\
+\midrule
+1{,}000 & 0.990 & 0.001 & 0.04\,ms & 0.403 & 0.755 \\
+5{,}000 & 0.990 & 0.002 & 0.04\,ms & 0.328 & 0.763 \\
+10{,}000 & 0.990 & 0.002 & 0.05\,ms & 0.340 & 0.763 \\
+50{,}000 & 0.990 & 0.002 & 0.07\,ms & 0.317 & 0.763 \\
+100{,}000 & \textbf{0.993} & \textbf{0.002} & 0.05\,ms & 0.352 & 0.763 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+KPT recall \emph{improves} slightly at scale (0.993 at 100k vs.\ 0.990 at 6k).
+Under controlled sequential sampling (single seed, no balanced resampling), pair\_corr tightens to 0.001--0.002 across all scales, consistent with the $\leq 0.029$ measured in the 3-seed balanced evaluation (Section~\ref{sec:dcpe-comparison}), where sampling variance accounts for the difference.
+Encode overhead is 0.05\,ms/doc.
+
+\subsection{Public Layer Dimensionality}
+
+\begin{observation}[Public Layer Compression]
+\label{obs:pca}
+PCA on the public layer of 10{,}000 encoded documents at 100k scale:
+\end{observation}
+
+\begin{table}[htbp]
+\centering
+\caption{Public layer dimensionality analysis.}
+\label{tab:pca}
+\begin{tabular}{@{}lc@{}}
+\toprule
+\textbf{Measure} & \textbf{Value} \\
+\midrule
+Public layer dimensions & 14 \\
+Effective dimensions (95\% variance) & 12 \\
+Plaintext dimensions & 384 \\
+\textbf{Dimensionality ratio} & \textbf{12/384 = 3.1\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The nonlinear pipeline (orthogonal projection $\to$ \texttt{tanh} $\to$ mode routing $\to$ \texttt{tanh} $\to$ chunk pooling $\to$ normalize) collapses 384 input dimensions to 14 public dimensions, of which only 12 carry 95\% of the variance.
+
+\paragraph{Qualification.}
+PCA effective rank measures linear variance, not mutual information.
+A formal bound on $I(X; \mathrm{Public}(X))$ via the Data Processing Inequality is in preparation.
+The observation is consistent with empirical pair\_corr $\leq 0.029$.
+
+\subsection{Vectorizer Independence}
+
+KPT operates on any embedding model without retraining or parameter adjustment.
+We test three models spanning different architectures and dimensions:
+
+\begin{table}[htbp]
+\centering
+\caption{Vectorizer independence: KPT performance across embedding models.}
+\label{tab:vectorizer}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{Model} & \textbf{Dim} & \textbf{Correct} & \textbf{Wrong} & \textbf{Recall@3} & \textbf{wave} \\
+ & & \textbf{Score} & \textbf{Score} & & \textbf{pair\_corr} \\
+\midrule
+all-MiniLM-L6-v2 & 384 & 0.557 & 0.012 & 1.000 & $+$0.002 \\
+mxbai-embed-large-v1 & 1024 & 0.558 & 0.011 & 1.000 & $+$0.002 \\
+bge-m3 & 1024 & 0.558 & 0.011 & 1.000 & $+$0.010 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Scores, isolation, and leakage are consistent across all three.
+KPT adds 0.05\,ms/doc regardless of embedding dimension because the pipeline is pure matrix arithmetic (no model inference).
+The embedding model dominates wall-clock time; KPT overhead is negligible.
+
+\subsection{Quantization Sensitivity}
+
+Production vector databases routinely quantize embeddings to reduce storage.
+We test whether KPT tolerates reduced precision by quantizing only the wave vectors (\texttt{wave\_real}, \texttt{wave\_imag}, \texttt{base\_wave\_real}, \texttt{base\_wave\_imag}) while keeping \texttt{mode\_weight} at float32 (required as scramble seed).
+
+\begin{table}[htbp]
+\centering
+\caption{Quantization sensitivity for wave vector storage.}
+\label{tab:quantization}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Precision} & \textbf{Recall@10} & \textbf{Score Mean} & \textbf{Storage/doc} \\
+\midrule
+float64 & 0.980 & 0.5566 & 54.1\,KB \\
+float32 (baseline) & 0.980 & 0.5566 & 27.1\,KB \\
+\textbf{int16 fixed-point} & \textbf{0.982} & \textbf{0.5566} & \textbf{13.6\,KB} \\
+float16 & 0.906 & 0.5566 & 13.6\,KB \\
+12-bit quantized & 0.912 & 0.5566 & 13.6\,KB \\
+8-bit quantized & 0.214 & 0.5566 & 6.9\,KB \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+int16 fixed-point (scaling each tensor to $[-32767, 32767]$) achieves identical recall at half the storage of float32.
+float64 provides no benefit over float32.
+
+Below 12 bits, recall degrades rapidly.
+The root cause is score compression: correct-key scores cluster within $\pm 0.001$, so quantization errors of comparable magnitude flip rankings.
+The score mean remains stable (the coherence signal is preserved) but the fine-grained ordering is lost.
+
+\paragraph{Critical constraint.}
+\texttt{mode\_weight} must remain at full float32 precision.
+It serves as the per-document scramble seed via SHA-256(\texttt{key} $\|$ \texttt{mode\_weight}$_i$\texttt{.bytes}).
+Even single-bit rounding changes the hash, producing a wrong permutation and destroying the score.
+At 8 floats per document (32 bytes), this is negligible storage overhead.
+
+\subsection{Beyond Search: Key-Gated Clustering}
+
+KPT gates not only retrieval but any operation that depends on pairwise similarity.
+We test clustering: KMeans on score-matrix rows (each document's similarity profile as a feature vector) with 10 clusters, 1{,}000 documents.
+
+\begin{table}[htbp]
+\centering
+\caption{Key-gated clustering: cluster recovery under different access levels.}
+\label{tab:clustering}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Space} & \textbf{ARI} & \textbf{NMI} \\
+\midrule
+Plaintext (baseline) & 1.000 & 1.000 \\
+\textbf{Authorized (correct key)} & \textbf{1.000} & \textbf{1.000} \\
+Wrong-key scores & 0.040 & 0.125 \\
+Public layer & 0.001 & 0.021 \\
+Scrambled wave (at rest) & $-$0.000 & 0.017 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+With the correct key, cluster recovery is perfect (ARI $= 1.0$).
+With a wrong key, it collapses to noise.
+The kNN neighbor overlap tells the same story: 89.7\% with correct key, 0.9\% with wrong key (random baseline at $k{=}10$).
+
+This extends KPT beyond retrieval to any downstream task that operates on pairwise similarity: clustering, deduplication, recommendation, anomaly detection, and topic tracking can all be key-gated through the same stored representation.
+
+
+%% ========================================================================
+\section{Adversarial Analysis}
+\label{sec:adversarial}
+
+Two independent red-team analyses (cryptographic + ML), then empirical reproduction on 2{,}000 documents.
+
+\subsection{Known-Plaintext Attack}
+
+\textbf{Claim:} Neural net achieves cosine 0.4--0.55 from 500+ pairs.
+
+\textbf{Result:} MLP ($256 \to 512 \to 384$) achieves cosine \textbf{0.228} ($N{=}800$).
+Similarity correlation 0.048.
+The nonlinear pipeline destroys enough information for inversion to fail.
+
+\subsection{Score-Oracle Attack}
+\label{sec:score-oracle}
+
+\textbf{Claim:} Cross-key score profiles reconstruct the Gram matrix.
+
+\textbf{Result:} Gram-matrix correlation \textbf{0.024} ($200$ queries $\times$ $2{,}000$ docs).
+kNN overlap 0.006 vs.\ random 0.005.
+Cross-key scores are too flat (variance ${\sim}10^{-12}$) for any signal.
+
+\subsection{Statistical Leakage}
+
+\textbf{Claim:} pair\_corr $= 0.029$ becomes significant at $N \geq 1{,}200$.
+
+\textbf{Result:} Controlled sweep $N{=}50$--$2{,}000$ on the public layer: pair\_corr oscillates around $\mathbf{0.00 \pm 0.01}$ at all $N$.
+Public-layer homophily equals random chance.
+Note: this tests only the public layer; \texttt{mode\_weight} and \texttt{mode\_energy} show weak residual signal (pair\_corr $\approx 0.07$, ARI $\approx 0.09$), which is documented in Section~\ref{sec:limitations}.
+
+\subsection{Chosen Plaintext Attack (CPA)}
+\label{sec:cpa}
+
+\textbf{Claim:} Attacker chooses documents with known structure (orthogonal basis, known clusters) and learns the transformation.
+
+Three CPA strategies tested with 500 chosen pairs:
+\begin{itemize}[nosep]
+  \item \textbf{Linear reconstruction} (least-squares on \texttt{wave\_real}): cosine \textbf{0.001}. Linear model cannot approximate the nonlinear scrambled pipeline.
+  \item \textbf{Cluster injection} (10 known clusters): ARI $\mathbf{-0.002}$ on \texttt{wave\_real}, $\mathbf{-0.002}$ on public. No cluster recovery in any stored representation.
+  \item \textbf{MLP inversion} ($512 \to 512$ network): cosine \textbf{0.005} on \texttt{wave\_real}. The per-document scramble makes the mapping doc-dependent, defeating generalization.
+\end{itemize}
+
+CPA is strictly stronger than the known-plaintext attack (Section~5.1) because the attacker controls the input distribution.
+It still fails.
+
+\subsection{Collusion Attack}
+
+\textbf{Claim:} Two users with different keys combine their encrypted views of the same documents.
+
+Four collusion strategies tested (500 documents, 2 keys):
+
+\begin{table}[htbp]
+\centering
+\caption{Collusion attack strategies and results.}
+\label{tab:collusion}
+\begin{tabular}{@{}lc@{}}
+\toprule
+\textbf{Strategy} & \textbf{Correlation} \\
+\midrule
+Concatenate public layers & $-$0.002 \\
+Concatenate wave vectors & \textbf{0.001} \\
+Wave product (element-wise) & 0.000 \\
+CCA alignment & $-$0.001 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Without per-document scrambling, concatenating wave vectors yielded 0.944 correlation, a critical vulnerability.
+The scramble reduces this to noise because each key produces different per-document permutations: combining differently scrambled vectors is like combining unrelated random vectors.
+
+\subsection{Remaining Limitations}
+\label{sec:limitations}
+
+\begin{itemize}
+  \item \textbf{Score compression.}
+    Correct-key scores cluster at $0.557 \pm 0.001$.
+    Ranking is preserved and retrieval quality is unaffected (Recall@10 $= 0.993$), but absolute score differences are small.
+    A natural first impulse is to stretch scores post-hoc (e.g., via exponential rescaling), but this would amplify the signal available to score-oracle attackers.
+    The compression is a direct consequence of the isolation mechanism: the same phase coherence that collapses wrong-key scores to ${\sim}0.01$ also compresses correct-key scores into a narrow band.
+    Any monotonic rescaling applied server-side would equally benefit an attacker.
+    Client-side display normalization after authenticated retrieval is safe and recommended.
+
+  \item \textbf{Cross-key score bias.}
+    Wrong-key results are query-independent (same documents always rank highest).
+    This does not affect security but reveals wrong-key status.
+
+  \item \textbf{No formal security reduction (yet).}
+    We provide analytical bounds (2 theorems) and empirical evidence (5 defeated attacks), but no reduction to a known hard problem.
+    The building blocks for such a proof exist (phase retrieval hardness, $\mathrm{sinc}^2$ decay structure, nonlinear non-invertibility) and this is an open research direction.
+
+  \item \textbf{Mode routing leakage.}
+    \texttt{mode\_weight} and \texttt{mode\_energy} are not scrambled (\texttt{mode\_weight} serves as the per-document scramble seed via SHA-256(\texttt{key} $\|$ \texttt{mode\_weight}$_i$\texttt{.bytes})).
+    They show weak cluster signal (ARI $\approx 0.09$, pair\_corr $\approx 0.07$) because similar documents route through similar modes.
+    This is not sufficient for practical cluster recovery but is the weakest remaining component.
+
+  \item \textbf{Precision sensitivity.}
+    KPT requires at least 16-bit precision for wave vectors.
+    int16 fixed-point achieves identical Recall@10 (0.982) at half the storage of float32.
+    Below 12 bits, recall degrades rapidly due to score compression: all correct-key scores cluster within $\pm 0.001$, so even small quantization errors flip rankings.
+    \texttt{mode\_weight} must remain at float32 because it serves as the scramble seed; any rounding changes the SHA-256 hash and produces a wrong permutation.
+    int8 quantization destroys retrieval entirely (Recall@10 $= 0.214$).
+\end{itemize}
+
+
+%% ========================================================================
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{What KPT Is}
+
+KPT is access control on meaning.
+The same stored object supports authorized search (correct key produces ranked results) and denies unauthorized access (wrong key produces noise).
+No secondary plaintext index, no decryption at query time, no trust in the storage layer.
+
+In multi-tenant vector databases, different users search the same physical index with different keys.
+Each sees only their own semantic space.
+
+\subsection{Why Not Just Encrypt Everything?}
+
+Standard symmetric encryption (AES-GCM) on embeddings provides stronger cryptographic guarantees but eliminates searchability entirely.
+To answer ``find documents about cats,'' the system must:
+
+\begin{enumerate}[nosep]
+  \item Decrypt all $N$ embeddings ($O(N)$ AES operations).
+  \item Compute query similarity in plaintext ($O(N \cdot d)$ dot products).
+  \item Return results, re-encrypt.
+\end{enumerate}
+
+At $N{=}100{,}000$, $d{=}384$, this requires decrypting 147\,MB of vectors per query.
+With KPT, the score operator works directly on the stored keyed vectors: no decryption, $O(N \cdot d)$ dot products on the encrypted representation, same asymptotic cost as plaintext retrieval.
+
+\begin{table}[htbp]
+\centering
+\caption{Property comparison: AES-GCM vs.\ KPT vs.\ DCPE/SAP.}
+\label{tab:property-comparison}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Property} & \textbf{AES-GCM} & \textbf{KPT} & \textbf{DCPE/SAP} \\
+\midrule
+Search without decryption & No & Yes & Yes \\
+Leakage (pair\_corr) & 0 & $\leq$0.029 & $\geq$0.714 \\
+Formal proof & Yes & No & Yes (RoR) \\
+Query cost & $O(N)$ decrypt $+$ $O(Nd)$ & $O(Nd)$ & $O(Nd)$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+KPT occupies the gap between ``perfectly secure but unsearchable'' and ``searchable but leaky.''
+
+\subsection{Security--Utility Trade-off}
+
+The decoy floor controls the trade-off: 0.24 (default) gives ratio $47\times$ with robust retrieval; 0.0 gives $15{,}905\times$ at $d{=}1024$ but retrieval is more brittle.
+Analogous to DCPE's noise parameter but on a different axis.
+
+\textbf{Score compression is inherent, not fixable.}
+The same phase coherence that provides key isolation also compresses correct-key scores into a narrow band ($0.557 \pm 0.001$).
+This is not an implementation artifact; it follows directly from the $\mathrm{sinc}^2$ decay structure: correct-key coherence is near-maximal for all documents, with fine-grained ranking encoded in the residual base-overlap term.
+Attempts to widen the score distribution (e.g., exponential stretching) would proportionally increase information available to score-oracle attackers.
+We recommend treating KPT scores as ordinal (ranking) rather than cardinal (absolute similarity), which aligns with standard top-$k$ retrieval practice.
+
+\subsection{Beyond Search}
+
+KPT creates a key-gated semantic layer, not just a search index.
+Any operation on pairwise similarity becomes key-dependent: clustering, recommendation, deduplication, anomaly detection, topic tracking.
+In multi-user memory systems, each user's semantic structure (topics, episodes, connections) exists only in their keyed space.
+The storage layer holds scrambled vectors that support none of these operations without the key.
+RAG pipelines benefit directly: the retrieval step is key-gated, so the language model receives only authorized context.
+
+\subsection{Scaling Beyond 100k: Two-Stage Architecture}
+
+Brute-force KPT scoring scales linearly with document count. In multi-tenant deployments, a user-ID filter restricts scoring to each user's documents. At 100k documents per user, query latency is ${\sim}180$\,ms on CPU.
+
+\subsection{When to Use KPT}
+
+\textbf{Appropriate:} Data-at-rest protection for vector databases, multi-tenant semantic search, Recall $> 0.99$ required, no HE/ORAM budget, rate-limited score API.
+
+\textbf{Not appropriate:} Formal cryptographic guarantees required, compliance regimes that mandate proven encryption, or attacker has unrestricted score-oracle access.
+Our score-oracle test (Section~\ref{sec:score-oracle}) used 200 queries $\times$ 2{,}000 docs and found Gram correlation 0.024.
+As an informal intuition: wrong-key score variance is ${\sim}10^{-12}$ per query, suggesting $O(10^{12})$ queries would be needed to accumulate a distinguishable signal.
+However, this is not a formal bound; the actual threshold depends on the attacker's aggregation strategy and detector design, which we have not formalized.
+We recommend rate-limiting as a practical deployment measure.
+
+\subsection{Method Comparison}
+
+\begin{table}[htbp]
+\centering
+\caption{Comprehensive method comparison.}
+\label{tab:method-comparison}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Property} & \textbf{KPT} & \textbf{AES-GCM} & \textbf{DCPE/SAP} & \textbf{Compass} \\
+\midrule
+Recall@10 (100k docs) & \textbf{0.993} & N/A & 0.352 & ${\sim}1.0$ \\
+pair\_corr (public) & $\mathbf{\leq 0.029}$ & 0 & $\geq$0.714 & 0 \\
+Public dimensionality & 12/384 (3.1\%) & N/A & full & 0 \\
+Formal proof & No & Yes & Yes (RoR) & Yes \\
+Search w/o decrypt & \textbf{Yes} & No & Yes & Yes \\
+Overhead & 0.05\,ms/doc & ${\sim}0$ & $<$1\,ms/doc & 10--$100\times$ \\
+Vectorizer-agnostic & Yes & Yes & Yes & No \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+%% ========================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+We present the keyed phase transform, a method that gates semantic retrieval on a secret key.
+Phase coherence is the sole isolation mechanism (8-component ablation); the score decays as $\mathrm{sinc}^2(\delta)$ under phase perturbation (Theorem~\ref{thm:sinc}), yielding 623-bit geometric key depth (Theorem~\ref{thm:keydepth}).
+Per-document scrambling reduces at-rest wave vector leakage from 0.904 to $-0.004$, defeating collusion and chosen-plaintext attacks.
+Five adversarial evaluations fail empirically.
+
+Across three datasets, KPT achieves Recall@10 $\geq 0.906$ with public-layer pair\_corr $\leq 0.029$.
+At 100{,}000 documents (AG News), Recall@10 reaches 0.993 with pair\_corr tightening to 0.002 under controlled sampling.
+KPT consistently outperforms DCPE/SAP on the retrieval-leakage frontier at all tested operating points.
+
+In a combined deployment, text payloads are AES-256-GCM encrypted and vector representations are KPT-protected. This dual-layer architecture provides defense in depth: AES protects content, KPT protects semantic structure. Even if the KPT layer were broken, an attacker gains only pairwise similarity information between opaque ciphertext blobs, not content. KPT is access control on meaning: a lightweight, mathematically grounded key-isolation layer that makes stored embeddings searchable with the right key and useless without it.
+
+
+%% ========================================================================
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

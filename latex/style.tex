@@ -1,0 +1,90 @@
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{natbib}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{enumitem}
+\providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+
+\definecolor{pfNavy}{HTML}{11283A}
+\definecolor{pfBlue}{HTML}{2C7FB8}
+\definecolor{pfGray}{HTML}{5B6670}
+\definecolor{pfLight}{HTML}{E8F1F7}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=pfBlue,
+  citecolor=pfBlue,
+  urlcolor=pfBlue,
+  pdftitle={Keyed Phase Transform for Private Vector Retrieval}
+}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{proposition}{Proposition}
+\newtheorem{remark}{Remark}
+\newtheorem{definition}{Definition}
+\newtheorem{observation}{Observation}
+
+\newcommand{\whitepapertitlevalue}{}
+\newcommand{\whitepapersubtitlevalue}{isar innovations Technical Report}
+\newcommand{\whitepaperauthorvalue}{}
+\newcommand{\whitepaperemailvalue}{}
+\newcommand{\whitepaperdatevalue}{\today}
+
+\newcommand{\setwhitepapertitle}[1]{\gdef\whitepapertitlevalue{#1}}
+\newcommand{\setwhitepapersubtitle}[1]{\gdef\whitepapersubtitlevalue{#1}}
+\newcommand{\setwhitepaperauthor}[1]{\gdef\whitepaperauthorvalue{#1}}
+\newcommand{\setwhitepaperemail}[1]{\gdef\whitepaperemailvalue{#1}}
+\newcommand{\setwhitepaperdate}[1]{\gdef\whitepaperdatevalue{#1}}
+
+\newcommand{\projectfitlogopath}{logo.pdf}
+\newcommand{\projectfitwordmark}{%
+  \includegraphics[height=15mm]{\projectfitlogopath}%
+}
+
+\newcommand{\makewhitepapertitle}{%
+  \hypersetup{pageanchor=false}%
+  \begin{titlepage}
+  \thispagestyle{empty}
+
+  \noindent
+  \begin{minipage}[t]{0.56\textwidth}
+    {\sffamily\bfseries\large\color{pfNavy}isar innovations\par}
+    \vspace{0.18cm}
+    {\sffamily\small\color{pfGray}\whitepapersubtitlevalue\par}
+  \end{minipage}
+  \hfill
+  \begin{minipage}[t]{0.32\textwidth}
+    \raggedleft
+    \projectfitwordmark
+  \end{minipage}
+
+  \vspace{2.4cm}
+
+  {\color{pfBlue}\rule{\textwidth}{1.5pt}\par}
+  \vspace{0.8cm}
+
+  {\noindent\parbox{0.90\textwidth}{%
+    \raggedright
+    \bfseries\huge \whitepapertitlevalue\par
+  }}
+  \vspace{0.9cm}
+
+  {\large\sffamily\color{pfGray}\whitepaperauthorvalue\par}
+  \vspace{0.15cm}
+  {\normalsize\ttfamily\whitepaperemailvalue\par}
+
+  \vfill
+
+  {\color{pfLight}\rule{\textwidth}{12pt}\par}
+  \vspace{0.45cm}
+  {\sffamily\small\color{pfGray}\whitepaperdatevalue\par}
+  \end{titlepage}
+  \clearpage
+  \hypersetup{pageanchor=true}%
+  \setcounter{page}{1}%
+}

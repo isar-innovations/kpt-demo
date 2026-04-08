@@ -1,0 +1,34 @@
+{
+  "cpa": {
+    "linear_recon_cosine": 0.0014313734136521816,
+    "cluster_ari_public": -0.002124619936414406,
+    "cluster_ari_wave": -0.0019438912821431787,
+    "cluster_nmi_public": 0.03265832083366967,
+    "cluster_nmi_wave": 0.030601167974232756
+  },
+  "gradient_key_recovery": {
+    "best_cosine_to_target": 0.010328173637390137,
+    "mean_loss": 1.0000441074371338,
+    "cross_key_score_max": 0.014376658946275711,
+    "cross_key_score_mean": 0.012038457207381725,
+    "correct_key_score_mean": 0.5569886565208435,
+    "n_steps": 2000
+  },
+  "higher_order": {
+    "pair_corr_2pt": -0.019509863863835096,
+    "triple_corr_3pt": -0.0024176974319030523,
+    "quad_corr_4pt": 0.003549355226623059,
+    "cluster_ari_public": -0.001008986551986828,
+    "cluster_ari_wave": 0.000896154804773298,
+    "cluster_ari_spectral": -0.0010178074210986771
+  },
+  "collusion": {
+    "corr_alice_solo": -0.00012412794055662106,
+    "corr_bob_solo": -0.002840072287281139,
+    "corr_concat_public": -0.002217668170255657,
+    "corr_concat_wave": 0.0007991098840725856,
+    "corr_wave_product": 0.0001997769943041424,
+    "corr_cca": -0.0011620584257865892,
+    "best_collusion": 0.002217668170255657
+  }
+}

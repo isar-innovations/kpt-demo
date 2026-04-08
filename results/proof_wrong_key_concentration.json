@@ -1,0 +1,21 @@
+{
+  "theorem": "Wrong-Key Score Concentration",
+  "symbolic": {
+    "E_cos2": "1/2",
+    "E_cos4": "3/8",
+    "Var_cos2": "1/8"
+  },
+  "empirical": {
+    "correct_mean": 0.556638777256012,
+    "wrong_max_mean": 0.006743335148948245,
+    "wrong_max_max": 0.024963360279798508,
+    "wrong_max_std": 0.0044606441220981854,
+    "wrong_mean_mean": 0.006499772018915974,
+    "wrong_mean_std": 0.004421541391038702,
+    "gap_sigma": 119.19252072638457,
+    "n_keys": 10000,
+    "status": "PASS"
+  },
+  "verdict": "PASS",
+  "elapsed_seconds": 292.4817909169942
+}

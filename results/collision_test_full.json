@@ -1,0 +1,19 @@
+{
+  "n_keys": 100,
+  "n_docs": 500,
+  "n_queries": 50,
+  "correct_mean": 0.5566593134403228,
+  "correct_std": 0.00021212247589018346,
+  "wrong_max": 0.021836481988430023,
+  "wrong_mean": 0.006755992468385346,
+  "wrong_std": 0.004463927756064299,
+  "gap_sigma": 119.80992092117297,
+  "worst_collision_score": 0.021836481988430023,
+  "worst_collision_keys": [
+    "user-key-0019-c51b6e",
+    "user-key-0087-8d57f7"
+  ],
+  "collisions_above_005": 0,
+  "collisions_above_010": 0,
+  "total_cross_key_tests": 9900
+}

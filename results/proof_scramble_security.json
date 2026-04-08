@@ -1,0 +1,65 @@
+{
+  "theorem": "Scramble Indistinguishability",
+  "statement": "E[<x[P_i]*S_i, y[P_j]*S_j>] = 0, Var = 1/d",
+  "symbolic": {
+    "E_Z": 0,
+    "Var_Z": "1/d",
+    "tail": "2*exp(-d*t^2/2)"
+  },
+  "monte_carlo": {
+    "64": {
+      "empirical_mean": 0.0004006453364228021,
+      "empirical_var": 0.015603041133597803,
+      "theoretical_var": 0.015625,
+      "var_ratio": 0.9985946325502594,
+      "empirical_tail_005": 0.6916,
+      "theoretical_tail_005": 1.0,
+      "status": "PASS"
+    },
+    "128": {
+      "empirical_mean": -0.00032144445596334927,
+      "empirical_var": 0.00783782666203447,
+      "theoretical_var": 0.0078125,
+      "var_ratio": 1.0032418127404121,
+      "empirical_tail_005": 0.57428,
+      "theoretical_tail_005": 1.0,
+      "status": "PASS"
+    },
+    "384": {
+      "empirical_mean": -0.0001595448120198085,
+      "empirical_var": 0.0026013295980965518,
+      "theoretical_var": 0.0026041666666666665,
+      "var_ratio": 0.9989105656690759,
+      "empirical_tail_005": 0.32783,
+      "theoretical_tail_005": 1.0,
+      "status": "PASS"
+    },
+    "768": {
+      "empirical_mean": 4.691015631689693e-05,
+      "empirical_var": 0.0012898978508015498,
+      "theoretical_var": 0.0013020833333333333,
+      "var_ratio": 0.9906415494155902,
+      "empirical_tail_005": 0.16382,
+      "theoretical_tail_005": 0.7657857719502239,
+      "status": "PASS"
+    },
+    "3072": {
+      "empirical_mean": 1.6032171466383875e-05,
+      "empirical_var": 0.00032172708478945026,
+      "theoretical_var": 0.0003255208333333333,
+      "var_ratio": 0.9883456044731912,
+      "empirical_tail_005": 0.00527,
+      "theoretical_tail_005": 0.042987202690179804,
+      "status": "PASS"
+    }
+  },
+  "conditioned": {
+    "mode_weight_corr": 0.14352594845879418,
+    "seed_corr": 0.009966688933241237,
+    "pre_scramble_corr": 0.45399294245559574,
+    "post_scramble_corr": -0.0011687296395540136,
+    "status": "PASS"
+  },
+  "verdict": "PASS",
+  "elapsed_seconds": 16.680681541911326
+}

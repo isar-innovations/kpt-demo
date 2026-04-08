@@ -1,0 +1,69 @@
+\begin{thebibliography}{11}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Cao et~al.(2026)]{cao2026}
+Cao et~al.
+\newblock {OSNIP}: Obfuscated semantic null space injection, 2026.
+
+\bibitem[Fagan(2025)]{fagan2025}
+Fagan.
+\newblock Keyed chaotic dynamics for privacy-preserving neural inference, 2025.
+
+\bibitem[Fuchsbauer et~al.(2022)Fuchsbauer, Ghosal, O'Neill, and
+  Pietrzak]{fuchsbauer2022}
+Georg Fuchsbauer, Riddhi Ghosal, Adam O'Neill, and Krzysztof Pietrzak.
+\newblock Approximate distance-comparison-preserving symmetric encryption.
+\newblock In \emph{Security and Cryptography for Networks (SCN)}, 2022.
+
+\bibitem[He et~al.(2025)]{he2025}
+Jiaqi He et~al.
+\newblock {STEER}: Transform before you query, 2025.
+
+\bibitem[Liu et~al.(2025)]{liu2025}
+Yifan Liu et~al.
+\newblock Privacy-preserving approximate nearest neighbor search ({DCE}), 2025.
+
+\bibitem[Maillard et~al.(2020)Maillard, Loureiro, Krzakala, and
+  Zdeborov{\'a}]{maillard2020}
+Antoine Maillard, Bruno Loureiro, Florent Krzakala, and Lenka Zdeborov{\'a}.
+\newblock Phase retrieval in high dimensions: Statistical and computational
+  phase transitions.
+\newblock In \emph{Advances in Neural Information Processing Systems
+  (NeurIPS)}, 2020.
+
+\bibitem[Morris et~al.(2023)Morris, Kuleshov, Shmatikov, and Rush]{morris2023}
+John~X. Morris, Volodymyr Kuleshov, Vitaly Shmatikov, and Alexander~M. Rush.
+\newblock Text embeddings reveal (almost) as much as text.
+\newblock In \emph{Proceedings of the 2023 Conference on Empirical Methods in
+  Natural Language Processing (EMNLP)}, 2023.
+
+\bibitem[{OWASP}(2025)]{owasp2025}
+{OWASP}.
+\newblock {LLM Top 10: LLM08 --- Vector and Embedding Weaknesses}.
+\newblock
+  \url{https://owasp.org/www-project-top-10-for-large-language-model-applications/},
+  2025.
+
+\bibitem[Rahimi and Recht(2007)]{rahimi2007}
+Ali Rahimi and Benjamin Recht.
+\newblock Random features for large-scale kernel machines.
+\newblock In \emph{Advances in Neural Information Processing Systems (NIPS)},
+  2007.
+
+\bibitem[Zhu et~al.(2024)]{zhu2024}
+Yifan Zhu et~al.
+\newblock Compass: Encrypted semantic search with approximate nearest
+  neighbors.
+\newblock IACR ePrint 2024/1255, 2024.
+
+\bibitem[Zou et~al.(2025)Zou, Lee, Huang, Hartigan, and Chen]{zou2025}
+Wei Zou, Isack Lee, Yangsibo Huang, Peter Hartigan, and Yunfang Chen.
+\newblock {PoisonedRAG}: Knowledge corruption attacks to retrieval-augmented
+  generation of large language models.
+\newblock In \emph{USENIX Security Symposium}, 2025.
+
+\end{thebibliography}
